@@ -673,15 +673,20 @@ def ping_result():
     ping_time = []
     file_mylog = [file for file in os.listdir('.') if 'my_log' in file and file.endswith('.txt')]
     pattern = r"LPING: .+,\d+,(\d+),\d+,\d+"
+    # pattern = r"LPING: .+,\d+,(\d+),\d+"  # 电信认证版本
     path = file_mylog[0]
     print(path)
     with open(path, 'r', encoding='UTF-8') as f:
-        line = f.readline()
-        while line:
+        try:
             line = f.readline()
-            matches = re.findall(pattern, line)
-            if matches:
-                ping_time.append(int(matches[0]))
+            while line:
+                line = f.readline()
+                matches = re.findall(pattern, line)
+                if matches:
+                    ping_time.append(int(matches[0]))
+        except Exception as e:
+            print(e)
+            print(line)
 
     # ping时延进行统计并生成饼图----------------------------------------------------------------------
     # data_range = [0, 1000, 5000, 10000, float('inf')]
