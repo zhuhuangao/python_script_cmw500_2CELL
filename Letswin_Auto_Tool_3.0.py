@@ -48,10 +48,13 @@ def get_config():
                     # 添加到全局变量字典中
                     config[key.strip()] = value.strip()
                 else:
-                    # 分割每一行的键值对
-                    key, value = line.strip().split('*')
-                    # 添加到全局变量字典中
-                    config_acore[key.strip()] = value.strip()
+                    if '*' in line.strip():
+                        # 分割每一行的键值对
+                        key, value = line.strip().split('*')
+                        # 添加到全局变量字典中
+                        config_acore[key.strip()] = value.strip()
+                    else:
+                        print("配置文件错误：" + str(line))
 
 
 get_config()
@@ -87,11 +90,16 @@ if power == '3' or power == '2':
     power_port = ser_control.port
 # com1 = input("请输入AT串口端口号如：com3：")
 com1 =config['com1']
-ser = serial.Serial(port=com1, baudrate=9600, timeout=1)
+if config['a_p_log'] != '2':
+    ser = serial.Serial(port=com1, baudrate=9600, timeout=1)
+    test_port = ser.port
+    print("AT端口是否打开" + str(ser.isOpen()))
+else:
+    test_port = 'log'
 # 是否自动打印Acore和Pcore log
 # a_p_log = input("输入’1‘自动打印log，其他不打印: ")
 a_p_log = config['a_p_log']
-if a_p_log == '1':
+if config['a_p_log'] != '0':
     # 打开Acore log
     com2 = config['com2']
     # com2 = input("请输入Acore串口端口号如：com3：")
@@ -100,10 +108,8 @@ if a_p_log == '1':
     com3 = config['com3']
     # com3 = input("请输入Pcore串口端口号如：com3：")
     ser_pcore = serial.Serial(port=com3, baudrate=4800000, timeout=5)
-    ser.write(bytes("at+plog=1" + "\r\n", encoding="utf-8"))
+    # ser.write(bytes("at+plog=1" + "\r\n", encoding="utf-8"))
 
-test_port = ser.port
-print("端口是否打开" + str(ser.isOpen()))
 # str_CTwing = int(input("是否测试云平台，1 代表测试，其他数字代表不测试："))
 # 云平台只有reboot或者断电情况能够自动注册
 str_CTwing = int(config['str_CTwing'])
@@ -266,6 +272,9 @@ list3 = []
 ping_1 = 0
 ping_2 = 0
 ping_all = 0
+ping_a = 0
+# 统计网络掉线次数
+CEREG_0 = 0
 
 # 定义百分比
 t_rate = 0
@@ -457,8 +466,20 @@ def init():
                 # 清除或者写回候选频点
                 send_AT0(config['learfcn'])
                 print("候选频点" + config['learfcn'])
-
             getdata_sleep(1)
+            # if config['flash_p'] == '1':
+            #     print('开启flash保护')
+            #     my_log.debug('开启flash保护')
+            #     if config['a_p_log'] == '1':
+            #         ser_acore.write(bytes("flash p" + "\r\n", encoding="utf-8"))
+            #     else:
+            #         print('未开启acore')
+            #         my_log.debug('未开启acore')
+            # else:
+            #     print("未开启flash保护")
+            #     my_log.debug("未开启flash保护")
+
+
             if CTwing == 1:
                 print("配置云平台参数" + str(CTwing_case_num))
                 CTWing_case_config(CTwing_case_num, imei)
@@ -609,17 +630,22 @@ def read_acore():
     print("启动Acore线程")
     name = path + '\\' + time_excel + ser_acore.port + 'Acorelog' + '.txt'
     A_P_RAM_SHARE = 0
-    if config['flash_p'] == '1':
-        print('开启flash保护')
-        my_log.debug('开启flash保护')
-        ser_acore.write(bytes("flash p" + "\r\n", encoding="utf-8"))
-    else:
-        print("未开启flash保护")
-        my_log.debug("未开启flash保护")
+    acore_rrc_req_time_0 = time.time()
+    acore_rrc_time_0 = time.time()
+    acore_auth_time_0 = time.time()
+    acore_secu_time_0 = time.time()
+    acore_esm_time_0 = time.time()
+    attach_complete_time_0 = time.time()
     with open(name, 'a', encoding='ASCII') as f:
         while(ser_acore.isOpen()):
             try:
-                data2 = ser_acore.readline().decode('ASCII').strip() + "\n"
+                data_acore = ser_acore.readline()
+            except Exception as e:
+                print(e)
+                my_log.debug(e)
+                data_acore = ser_acore.read_all()
+            try:
+                data2 = data_acore.decode('ASCII').strip() + "\n"
                 data1 = "[" + str(datetime.now().strftime('%m-%d %H:%M:%S.%f')) + ']' + ' '
                 data = str(data1 + data2)
                 if 'ACORE_PCORE_RAM_SHARE' in data2:
@@ -636,18 +662,66 @@ def read_acore():
                     flash_change += 1
                     # print(data2)
                 # if re.search(r'SPITFE', data2) != None or re.search(r'SPIRFNE', data2) != None or re.search(r'SPIRXFLR', data2) != None or re.search(r'SPIBUSY', data2) != None:
-                if re.search(r'acore will reboot PCORE', data2) != None:
+                if re.search(r'acore will reboot PCORE AuthFail', data2) != None:
                     my_log.debug("-----------------------------------------鉴权失败---------------------------------------")
                     my_log.debug(data2)
                     RST_3 += 1
                     # flash_SPI += 1
                     # print(data2)
+                if 'MAILBOX_RRC_REQ_SUCCESS 0' in data2:
+                    acore_rrc_req_time_0 = time.time()
+                if 'MAILBOX_RRC_REQ_SUCCESS 1' in data2:
+                    rrc_req_time = round((time.time() - acore_rrc_req_time_0), 2)
+                    my_log.debug("MAILBOX_RRC_REQ_SUCCESS_0_1时间：" + str(rrc_req_time))
+                    # print("MAILBOX_RRC_REQ_SUCCESS_0_1时间：" + str(rrc_req_time))
+
+                if 'MAILBOX_RRC_CONN_COMPLETE_SUCCESS 0' in data2:
+                    acore_rrc_time_0 = time.time()
+                if 'MAILBOX_RRC_CONN_COMPLETE_SUCCESS 1' in data2:
+                    rrc_complete_time = time.time()
+                    rrc_time = round((rrc_complete_time - acore_rrc_time_0), 2)
+                    my_log.debug("RRC_CONN_COMPLETE_SUCCESS_0_1时间：" + str(rrc_time))
+                    # print("RRC_CONN_COMPLETE_SUCCESS_0_1时间：" + str(rrc_time))
+
+                if 'MAILBOX_AUTH_RESP_SUCCESS 0' in data2:
+                    acore_auth_time_0 = time.time()
+                if 'MAILBOX_AUTH_RESP_SUCCESS 1' in data2:
+                    auth_time = round((time.time() - acore_auth_time_0), 2)
+                    my_log.debug("MAILBOX_AUTH_RESP_SUCCESS_0_1时间：" + str(auth_time))
+                    # print("MAILBOX_AUTH_RESP_SUCCESS_0_1时间：" + str(auth_time))
+
+                if 'MAILBOX_SECU_MODE_COMPLETE_SUCCESS 0' in data2:
+                    acore_secu_time_0 = time.time()
+                if 'MAILBOX_SECU_MODE_COMPLETE_SUCCESS 1' in data2:
+                    secu_time = round((time.time() - acore_secu_time_0), 2)
+                    my_log.debug("MAILBOX_SECU_MODE_COMPLETE_SUCCESS_0_1时间：" + str(secu_time))
+                    # print("MAILBOX_SECU_MODE_COMPLETE_SUCCESS_0_1时间：" + str(secu_time))
+
+                if 'MAILBOX_ESM_INFO_RESP_SUCCESS 0' in data2:
+                    acore_esm_time_0 = time.time()
+                if 'MAILBOX_ESM_INFO_RESP_SUCCESS 1' in data2:
+                    esm_time = round((time.time() - acore_esm_time_0), 2)
+                    my_log.debug("MAILBOX_ESM_INFO_RESP_SUCCESS_0_1时间：" + str(esm_time))
+                    # print("MAILBOX_ESM_INFO_RESP_SUCCESS_0_1时间：" + str(esm_time))
+
+                if 'MAILBOX_ATTACH_COMPLETE_SUCCESS 0' in data2:
+                    attach_complete_time_0 = time.time()
+                    rrc_attach_complet_time = round((attach_complete_time_0 - rrc_complete_time), 2)
+                    my_log.debug("MAILBOX_RRC_1_ATTACH_COMPLETE_SUCCESS_0时间：" + str(rrc_attach_complet_time))
+                    # print("MAILBOX_RRC_1_ATTACH_COMPLETE_SUCCESS_0时间：" + str(rrc_attach_complet_time))
+                if 'MAILBOX_ATTACH_COMPLETE_SUCCESS 1' in data2:
+                    attach_complete_time = round((time.time() - attach_complete_time_0), 2)
+                    my_log.debug("MAILBOX_ATTACH_COMPLETE_SUCCESS_0_1时间：" + str(attach_complete_time))
+                    # print("MAILBOX_ATTACH_COMPLETE_SUCCESS_0_1时间：" + str(attach_complete_time))
+
+
                 f.write(data)
                 f.flush()
 
             except Exception as e:
                 # print(e.__str__())
                 f.write(e.__str__())
+                my_log.debug(data_acore)
 
 
 def read_pcore():
@@ -658,23 +732,32 @@ def read_pcore():
     with open(name, 'a', encoding='ASCII') as f:
         while(ser_pcore.isOpen()):
             try:
-                data2 = ser_pcore.readline().decode('ASCII').strip() + "\n"
+                data_pcore = ser_pcore.readline()
+            except Exception as e:
+                print(e)
+                my_log.debug(e)
+                data_pcore = ser_pcore.read_all()
+            # print(data_pcore)
+            try:
+                data2 = data_pcore.decode('ASCII').strip() + "\n"
                 data1 = "[" + str(datetime.now().strftime('%m-%d %H:%M:%S.%f')) + ']' + ' '
                 data = str(data1 + data2)
-                if 'NBsys' in data2:
-                    NBsys += 1
-                if NBsys >= 1:
-                    for key in config_pcore:
-                        if key in data2:
-                            config_pcore[key] += 1
-                    if re.search(r'Paddy.+(attention|error|timeout)', data2) != None:
-                        dic_sim += 1
-                        my_log.debug(data2)
+                if a_p_log != '2':
+                    if 'NBsys' in data2:
+                        NBsys += 1
+                    if NBsys >= 1:
+                        for key in config_pcore:
+                            if key in data2:
+                                config_pcore[key] += 1
+                        if re.search(r'Paddy.+(attention|error|timeout)', data2) != None:
+                            dic_sim += 1
+                            my_log.debug(data2)
                 f.write(data)
                 f.flush()
             except Exception as e:
                 # print(e.__str__())
                 # data = "-----------------------打印乱码异常了-------------------------"
+                my_log.debug(str(data_pcore))
                 f.write(e.__str__())
 
 
@@ -1195,8 +1278,13 @@ def get_net_time():
     '''判断是否入网，返回统计时间t'''
     global AT_die, long_time, CELLID_error, t1, AT_death,CT_version
     i = 0
-    time.sleep(2)
-    net = getdata_0()
+    # getdata_sleep(1)
+    net = getdata_line()
+    if 'net_timeout' in config:
+        net_timeout = int(config['net_timeout'])
+    else:
+        net_timeout = 120
+    print("入网等待时间" + str(net_timeout) + 's....')
     my_log.debug("等待是否入网........：")
     while 'ADDR' not in net:
         # time.sleep(0.5) 行读取设置串口读取超时时间为1s，故不设置等待时间
@@ -1210,13 +1298,13 @@ def get_net_time():
             net = getdata_line()
             # return -1
 
-        if 120 < t4 < 121:
+        if net_timeout < t4 < net_timeout + 1:
             # if config['CT_version'] != '1':
             #     get_ota_data()
             send_at_result = send_AT(str_ADDR)
             if send_at_result == "Pass":
-                my_log.debug("120s不入网后输入" + str_ADDR + " Acore正常打印")
-                print("120s不入网后输入" + str_ADDR + "Acore正常打印")
+                my_log.debug(str(net_timeout) + "s不入网后输入" + str_ADDR + " Acore正常打印")
+                print(str(net_timeout) + "s不入网后输入" + str_ADDR + " Acore正常打印")
             if send_at_result == "Fail":
                 AT_death = AT_death + 1
             # 等待2s，不等待马上重启可能出现Pcorelog没打印
@@ -1227,9 +1315,9 @@ def get_net_time():
             time.sleep(0.5)
             net = getdata_line()
 
-        if t4 > 121:
-            print("入网时间超过2分钟,现在restart：")
-            my_log.debug("-------------------------入网时间超过2分钟,现在re_start------------------------------------")
+        if t4 > net_timeout + 1:
+            print("入网时间超过" + str(net_timeout) + "s,现在restart：")
+            my_log.debug("-------------------------入网时间超过" + str(net_timeout) + "s,现在restart-------------------------------")
             t = -1
             return t
     else:
@@ -1253,6 +1341,7 @@ def get_cell():
     """判断是否入网，发送AT+RADIO=CELL查看数据，返回cell信息"""
     global CELLID_error, AT_die, expected_cellid, AT_death, rsrp_old, rsrp_change_times
     # 打印串口缓冲的数据
+    rsrp_change = 0
     getdata_0()
     send_AT0(str_CELL)
     data_cell = getdata_line()
@@ -1290,7 +1379,7 @@ def get_cell():
             pre_cellid = rsrp[2]
             rsrp_new = int(rsrp[4])
             if rsrp_old != 0:
-                rsrp_change = rsrp_new-rsrp_old
+                rsrp_change = rsrp_new - rsrp_old
             rsrp_old = rsrp_new
 
             if expected_cellid != pre_cellid:
@@ -1392,16 +1481,17 @@ def get_cell_csinfo():
         # data_cell = "b'\r\nLUESTATS: CELL,0,0,0,0,0,-0,9999\r\n\r\nOK\r\n'"
         i = 0
         while 'CSINFO' not in cell_csinfo:
-            if i < 2:
+            if i < 5:
                 cell_csinfo = getdata_line()
-            if i >= 2:
+            if 5 >= i > 6:
                 print("发送" + str_CSINFO + "命令超时，等5s再发送1次")
                 my_log.debug("发送" + str_CSINFO + "命令超时，等5s再发送1次")
-                time.sleep(5)
+                # time.sleep(5)
+                # if i > 5:
                 send_AT0(str_CSINFO)
                 time.sleep(0.5)
-                cell_csinfo = getdata_0()
-            if i >= 3:
+                cell_csinfo = getdata_line()
+            if i >= 6:
                 AT_death = AT_death + 1
                 cell_csinfo = "CSINFO0,0,0,0,0,0,0"
             i = i + 1
@@ -1899,11 +1989,40 @@ def get_ota_data():
 
 
 def do_ping(judge):
-    global list, ping_1, ping_2, ping_all, ping_total_all
+    global list, ping_1, ping_2, ping_all, ping_total_all, CEREG_0
     if judge == 1:
         # send_AT0("AT+LPING=172.22.1.201,3000,60,10") # 221.229.214.202
-        ping_all = ping_all + 10
         getdata_0()
+        if 'AT_CEREG' in config:
+            send_AT0("AT+CEREG?")
+            lines = getdata_line()
+        else:
+            lines = 'CEREG: 0,1'
+        i = 0
+        while 'CEREG: 0,1' not in lines and 'CEREG: 1,1' not in lines:
+            lines = getdata_line()
+            # print(lines)
+            i += 1
+            if i%5 == 1:
+                send_AT0("AT+CEREG?")
+            if i > 11:
+                CEREG_0 += 1
+                print("网络掉线：" + str(CEREG_0))
+                my_log.debug("网络掉线：" + str(CEREG_0))
+                # 对齐ping结果
+                list.append('0')
+                # 对齐丢包结果
+                list.append('-1')
+                # 对齐最小时延
+                list.append('0')
+                # 最大时延
+                list.append('0')
+                # 平均时延
+                list.append('0')
+                return '0'
+    # else:
+        ping_all = ping_all + 10
+        t_ping = time.time()
         send_AT0(config['AT_LPING'])
         pattern = r"\d+.\d+.\d+,(\d+),.\d+,\d+"
         pattern1 = r"\d+.\d+,\d+,\d+,(\d+)"
@@ -1918,16 +2037,19 @@ def do_ping(judge):
         # my_log.debug(data)
         reg_read_data = 'LPING: ' + match1 + '\S{1,}'
         reg_data = re.search(reg_read_data, data)
-        i = 0
+        i_time = time.time() - t_ping
+        # print("等待超时时间" + str(i_time))
+        # print(match*(int(match1)+2))
         while reg_data == None:
-            if i < match*(int(match1)+4):
+            if i_time < match*(int(match1)+1):
                 if "LPING: 2\\r\\n" in data:
                     ping_2 = ping_2 + 1
                 if "LPING: 1\\r\\n" in data:
                     ping_1 = ping_1 + 1
                 data = getdata_line()
                 reg_data = re.search(reg_read_data, data)
-                i = i + 1
+                i_time = time.time() - t_ping
+                # i = i + 1
             else:
                 ping_total = '0'
                 ping_loss = '-1'
@@ -1937,7 +2059,8 @@ def do_ping(judge):
                 list.append('5000')
                 list.append('0')
                 list.append('500')
-                print("ping匹配数据150s异常现在断电重启")
+                # print("等待超时时间" + str(i_time))
+                print("ping匹配数据" + str(match*(int(match1)+1)) + "s异常现在断电重启")
                 # re_start()
                 return ping_total
         ping_total = reg_data.group().rstrip("\\r\\n'")
@@ -3681,6 +3804,7 @@ def star_test():
 
         # 做Ping业务
         do_ping(ping)
+        # print(list)
         my_log.debug(list)
         list1.append(list[0])
         list1.append(list[17])
@@ -3809,6 +3933,15 @@ if __name__ == '__main__':
     set_sheet(work_sheet4)
     excel_name = 'Test' + time_excel + test_port + '.csv'
     work_book.save(path + '\\' + excel_name)
+    if a_p_log == '2':
+        # ser.close()
+        tt1 = Thread(target=read_acore)
+        tt1.start()
+        tt2 = Thread(target=read_pcore)
+        tt2.start()
+        while 1:
+            time.sleep(1000000)
+            pass
 
     if a_p_log == '1':
         tt1 = Thread(target=read_acore)
@@ -3842,40 +3975,6 @@ if __name__ == '__main__':
         work_sheet.write(0, 1, power_mode)
 
     imei = get_imei()
-    # time.sleep(2)
-    # if CTwing == 1:
-    #     imei = get_imei()
-    #     print("配置云平台参数" + str(CTwing_case_num))
-    #     CTWing_case_config(CTwing_case_num, imei)
-    #     if auto_CTwing == "1":
-    #         send_AT0('at+lctregen=1')
-    #     else:
-    #         send_AT0('at+lctregen=0')
-    #     if flash == 0:
-    #         send_AT0(str_REBOOT)
-    #         restart_reboot += 1
-
-    # if psm_mode == '1':
-    #     psm_mode_1()
-    #     t1 = time.time()
-    #     send_AT(str_REBOOT)
-    #     at_first_time = t1
-    #     time.sleep(0.5)
-    #     send_AT0(str_PSM_time)
-    #     restart_reboot = restart_reboot + 1
-    #     getdata()
-    #     # t = get_net_time()
-    #     # print("第一次入网时间：" + str(t))
-    #     # my_log.debug("第一次入网时间：" + str(t))
-    #
-    # else:
-    #     if CT_version == '1':
-    #         my_log.debug("没有设置psm模式为0,开始计算时间")
-    #         t1 = time.time()
-    #         send_AT0(str_REBOOT)
-    #         restart_reboot += 1
-    #     else:
-    #         psm_mode_0()
     times = 1000000
     j = 0
     ping_min = 0
@@ -3888,22 +3987,45 @@ if __name__ == '__main__':
                 print("初始化测试")
                 init()
                 # 回读acore是否开启flash保护
-                if config['a_p_log'] == '1':
-                    ser_acore.write(bytes("flash p" + "\r\n", encoding="utf-8"))
+                if config['a_p_log'] != '0':
+                    if config['flash_p'] == '1':
+                        print("发送cfun0，开启flash保护")
+                        my_log.debug("发送cfun0，开启flash保护")
+                        getdata_sleep(2)
+                        ser_acore.write(bytes("flash p" + "\r\n", encoding="utf-8"))
+                        getdata_sleep(2)
+                    else:
+                        print("关闭flash保护")
+                        my_log.debug("关闭flash保护")
+                        getdata_sleep(2)
+                        ser_acore.write(bytes("flash u" + "\r\n", encoding="utf-8"))
+                        getdata_sleep(2)
+                else:
+                    print('未开启acore')
+                    my_log.debug('未开启acore')
                 my_log.debug(config)
             elif init_test != 1 and j == 0:
-                # list = first_test()
                 first_test()
-                if config['a_p_log'] == '1':
-                    ser_acore.write(bytes("flash p" + "\r\n", encoding="utf-8"))
+                if config['a_p_log'] != '0':
+                    if config['flash_p'] == '1':
+                        print("发送cfun0，开启flash保护")
+                        my_log.debug("发送cfun0，开启flash保护")
+                        getdata_sleep(2)
+                        ser_acore.write(bytes("flash p" + "\r\n", encoding="utf-8"))
+                        getdata_sleep(2)
+                    else:
+                        print("关闭flash保护")
+                        my_log.debug("关闭flash保护")
+                        getdata_sleep(2)
+                        ser_acore.write(bytes("flash u" + "\r\n", encoding="utf-8"))
+                        getdata_sleep(2)
+                else:
+                    print('未开启acore')
+                    my_log.debug('未开启acore')
                 my_log.debug(config)
+
             else:
                 star_test()
-            # 第二次测试是设置flash保护
-            if j == 1 and config['flash_p'] == '0':
-                ser_acore.write(bytes("flash u" + "\r\n", encoding="utf-8"))
-                print("关闭flash保护")
-                my_log.debug("关闭flash保护")
 
             if psm_mode == "1":
                 print(list3)
@@ -4055,7 +4177,8 @@ if __name__ == '__main__':
                 # 获取到上一次的平均时延
                 # ping_avg2 = int(list[16])
                 # 计算实际发起ping包的总数
-                ping_true = (j + 1 - long_time)*ping_total_all
+                ping_true = (j + 1 - long_time - CEREG_0)*ping_total_all
+                # print(CEREG_0)
                 ping_avg1 = int(list[20])*10*(j+1)
                 ping_avg = format((int(ping_avg)*10 + ping_avg1)/(10*(j+2)), '.0f')
                 if ping_true == 0:
@@ -4080,9 +4203,6 @@ if __name__ == '__main__':
                 list.append('0')
             while len(list3) < 10:
                 list3.append('0')
-
-            # list_result.append(ping_a)
-
         draw_line_time1 = time.time()
         time_cur = time.strftime('%m-%d-%H-%M-%S', time.localtime(time.time()))
         work_sheet.write(j + 2, 0, "第" + str(j + 1) + "次测试" + time_cur)
@@ -4145,5 +4265,10 @@ if __name__ == '__main__':
         list_result.clear()
         list3.clear()
         j += 1
-        # print("-------------------------------等待40s下一次开始----------------------------------------")
+        if 'waite_time' in config:
+            waite_time = int(config['waite_time'])
+            # print(config['waite_time'])
+            print("等待" + str(waite_time) + "s下一次开始.......")
+            getdata_sleep(waite_time)
+            # time.sleep(waite_time)
         # time.sleep(40)
